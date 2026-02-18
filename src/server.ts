@@ -13,7 +13,7 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { NinoxClient, NinoxTableSchema } from "./ninox-client.js";
+import { NinoxClient, NinoxTableSchema, NinoxFullTableSchema, NinoxFullField } from "./ninox-client.js";
 import { ContextStore, ModuleContext } from "./context-store.js";
 
 // ─── Configuration ─────────────────────────────────────────────────────
@@ -61,118 +61,111 @@ function createServer(): McpServer {
 
 function registerTools(server: McpServer): void {
 
-// ─── Helper: Format Schema as Markdown ─────────────────────────────────
+// ─── Helper: Format Full Schema as Markdown ─────────────────────────
 
-function formatSchemaAsMarkdown(schema: NinoxTableSchema): string {
-  let md = `## Tabelle: ${schema.name} (ID: ${schema.id})\n\n`;
+function formatFullSchemaAsMarkdown(schema: NinoxFullTableSchema): string {
+  let md = `## Tabelle: ${schema.caption} (ID: ${schema.id})\n\n`;
 
-  if (schema.fields && schema.fields.length > 0) {
-    md += `### Felder\n\n`;
-
-    for (const field of schema.fields) {
-      // Ninox verwendet "caption" für den Namen und "base" für den Typ
-      const fieldName = field.name || field.caption || field.id;
-      const fieldType = field.type || field.base || "unknown";
-
-      md += `#### ${fieldName} (ID: \`${field.id}\`, Typ: \`${fieldType}\`)\n`;
-
-      // Formelfelder (Ninox: "fn")
-      if (field.fn) {
-        md += `- **Formel:** \`\`\`\n${field.fn}\n\`\`\`\n`;
-      }
-
-      // Choice/Multi-Optionen (Ninox: "values" Objekt)
-      if (field.values && typeof field.values === "object") {
-        const values = field.values as Record<string, { caption?: string; color?: string; icon?: { icon?: string } }>;
-        const options = Object.entries(values)
-          .sort((a, b) => ((a[1] as any).order ?? 0) - ((b[1] as any).order ?? 0))
-          .map(([id, v]) => {
-            let opt = `${v.caption || id}`;
-            if (v.icon?.icon) opt += ` (${v.icon.icon})`;
-            return opt;
-          });
-        md += `- **Optionen:** ${options.join(", ")}\n`;
-      }
-
-      // Legacy choices Array (falls doch vorhanden)
-      if (field.choices && Array.isArray(field.choices)) {
-        md += `- **Optionen:** ${field.choices.map((c: any) => c.caption).join(", ")}\n`;
-      }
-
-      // Sichtbarkeitsbedingung
-      if (field.displayIf) {
-        md += `- **Nur anzeigen wenn:** \`${field.displayIf}\`\n`;
-      }
-      if (field.visibleIf) {
-        md += `- **Nur anzeigen wenn:** \`${field.visibleIf}\`\n`;
-      }
-      if (field.hideIf) {
-        md += `- **Ausblenden wenn:** \`${field.hideIf}\`\n`;
-      }
-
-      // Trigger/Events
-      if (field.onOpen) {
-        md += `- **Bei Öffnen:** \`\`\`\n${field.onOpen}\n\`\`\`\n`;
-      }
-      if (field.afterUpdate) {
-        md += `- **Nach Änderung:** \`\`\`\n${field.afterUpdate}\n\`\`\`\n`;
-      }
-      if (field.onChange) {
-        md += `- **Bei Änderung:** \`\`\`\n${field.onChange}\n\`\`\`\n`;
-      }
-
-      // Required / Pflichtfeld
-      if (field.required) {
-        md += `- **Pflichtfeld:** ja\n`;
-      }
-
-      // Referenz auf andere Tabelle
-      if (field.ref) {
-        md += `- **Verknüpft mit Tabelle:** \`${field.ref}\`\n`;
-      }
-      if (field.referencedTable) {
-        md += `- **Verknüpft mit Tabelle:** \`${field.referencedTable}\`\n`;
-      }
-
-      // Label-Position (z.B. "none" = Überschrift/Layout-Feld)
-      if (field.labelPosition) {
-        md += `- **Label-Position:** ${field.labelPosition}\n`;
-      }
-
-      // Styling
-      if (field.style) {
-        md += `- **Style:** \`${field.style}\`\n`;
-      }
-
-      // Alle weiteren Properties die wir nicht explizit behandeln
-      const knownKeys = new Set([
-        "id", "name", "type", "base", "caption", "captions", "fn",
-        "values", "choices", "displayIf", "visibleIf", "hideIf",
-        "onOpen", "afterUpdate", "onChange", "required", "ref",
-        "referencedTable", "labelPosition", "style",
-        // Layout/Meta - weniger relevant für Debugging
-        "order", "width", "formWidth", "height", "uuid",
-        "globalSearch", "hasIndex", "tooltips", "nextChoiceId",
-        "multiRenderer"
-      ]);
-      const extraProps: Record<string, unknown> = {};
-      for (const [key, value] of Object.entries(field)) {
-        if (!knownKeys.has(key) && value !== undefined && value !== null && value !== "" && value !== false) {
-          extraProps[key] = value;
-        }
-      }
-      if (Object.keys(extraProps).length > 0) {
-        md += `- **Weitere Eigenschaften:** \`${JSON.stringify(extraProps)}\`\n`;
-      }
-
-      md += `\n`;
-    }
-
-    md += `_Feld-IDs (${schema.fields.map(f => f.id).join(", ")}) sind stabil und ändern sich nie._\n\n`;
-  } else {
+  const fields = schema.fields;
+  if (!fields || Object.keys(fields).length === 0) {
     md += `_Keine Felder definiert._\n\n`;
+    return md;
   }
 
+  // Sort fields by order
+  const sortedFields = Object.entries(fields)
+    .sort(([, a], [, b]) => (a.order ?? 999) - (b.order ?? 999));
+
+  md += `### Felder (${sortedFields.length})\n\n`;
+
+  for (const [fieldId, field] of sortedFields) {
+    const fieldType = field.base || "unknown";
+    md += `#### ${field.caption} (ID: \`${fieldId}\`, Typ: \`${fieldType}\`)\n`;
+
+    // Formel (für fn-Felder)
+    if (field.fn) {
+      md += `- **Formel/Code:**\n\`\`\`\n${field.fn}\n\`\`\`\n`;
+    }
+
+    // Sichtbarkeitsbedingung ("Feld nur anzeigen wenn")
+    if (field.visibility) {
+      md += `- **Nur anzeigen wenn:** Feld \`${field.visibility}\` truthy\n`;
+    }
+
+    // Choice/Multi-Optionen (values Objekt)
+    if (field.values && typeof field.values === "object") {
+      const options = Object.entries(field.values)
+        .sort(([, a], [, b]) => ((a as any).order ?? 0) - ((b as any).order ?? 0))
+        .map(([id, v]) => {
+          let opt = v.caption || id;
+          if (v.icon?.icon) opt += ` (${v.icon.icon})`;
+          return opt;
+        });
+      md += `- **Optionen:** ${options.join(", ")}\n`;
+    }
+
+    // Referenz auf andere Tabelle
+    if (field.ref) {
+      md += `- **Verknüpft mit Tabelle:** \`${field.ref}\`\n`;
+    }
+
+    // Reverse-Verknüpfung
+    if (field.base === "rev" && field.reverseField) {
+      md += `- **Rück-Verknüpfung von Feld:** \`${field.reverseField}\`\n`;
+    }
+
+    // Required
+    if (field.required) {
+      md += `- **Pflichtfeld:** ja\n`;
+    }
+
+    // Style
+    if (field.style) {
+      md += `- **Style:** \`${field.style}\`\n`;
+    }
+
+    // Label-Position
+    if (field.labelPosition) {
+      md += `- **Label-Position:** ${field.labelPosition}\n`;
+    }
+
+    // Alle weiteren relevanten Properties
+    const knownKeys = new Set([
+      "base", "caption", "captions", "fn", "values",
+      "visibility", "ref", "reverseField", "required",
+      "style", "labelPosition",
+      // Meta/Layout – weniger relevant
+      "order", "width", "formWidth", "height", "uuid",
+      "globalSearch", "hasIndex", "tooltips", "nextChoiceId",
+      "multiRenderer", "choiceRenderer"
+    ]);
+    const extraProps: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(field)) {
+      if (!knownKeys.has(key) && value !== undefined && value !== null && value !== "" && value !== false) {
+        extraProps[key] = value;
+      }
+    }
+    if (Object.keys(extraProps).length > 0) {
+      md += `- **Weitere:** \`${JSON.stringify(extraProps)}\`\n`;
+    }
+
+    md += `\n`;
+  }
+
+  md += `_Feld-IDs sind stabil und ändern sich nie._\n\n`;
+  return md;
+}
+
+// Legacy-Formatierung für /tables Fallback
+function formatSchemaAsMarkdown(schema: NinoxTableSchema): string {
+  let md = `## Tabelle: ${schema.name} (ID: ${schema.id})\n\n`;
+  if (schema.fields && schema.fields.length > 0) {
+    md += `### Felder\n\n`;
+    for (const field of schema.fields) {
+      md += `- **${field.name}** (ID: \`${field.id}\`, Typ: \`${field.type}\`)\n`;
+    }
+    md += "\n";
+  }
   return md;
 }
 
@@ -203,13 +196,34 @@ server.tool(
   {},
   async () => {
     try {
-      // Get tables from Ninox
-      const tables = await ninoxClient.listTables();
       let text = `# DVBase Module & Tabellen\n\n`;
-      text += `Verfügbare Tabellen in der Datenbank:\n\n`;
-      
-      for (const table of tables) {
-        text += `- **${table.name}** (ID: \`${table.id}\`, ${table.fields?.length || 0} Felder)\n`;
+
+      // Try full schema first (shows all tables including hidden ones)
+      try {
+        const fullSchema = await ninoxClient.getFullDatabaseSchema();
+        const types = fullSchema.types || {};
+        const sortedTables = Object.entries(types).sort(([, a], [, b]) =>
+          a.caption.localeCompare(b.caption)
+        );
+
+        text += `Verfügbare Tabellen (${sortedTables.length}):\n\n`;
+        for (const [tableId, table] of sortedTables) {
+          const fieldCount = Object.keys(table.fields || {}).length;
+          const formulaCount = Object.values(table.fields || {}).filter(f => f.base === "fn").length;
+          const hidden = table.hidden ? " 🔒" : "";
+          const icon = table.icon ? ` (${table.icon})` : "";
+          let info = `${fieldCount} Felder`;
+          if (formulaCount > 0) info += `, ${formulaCount} Formeln`;
+          text += `- **${table.caption}**${icon}${hidden} (ID: \`${tableId}\`, ${info})\n`;
+        }
+      } catch {
+        // Fallback to /tables endpoint
+        const tables = await ninoxClient.listTables();
+        text += `Verfügbare Tabellen (${tables.length}):\n\n`;
+        for (const table of tables) {
+          text += `- **${table.name}** (ID: \`${table.id}\`, ${table.fields?.length || 0} Felder)\n`;
+        }
+        text += `\n_⚠️ Fallback-Modus: Keine Formelfelder sichtbar._\n`;
       }
 
       // If context store is available, also list documented modules
@@ -245,7 +259,7 @@ server.tool(
 
 server.tool(
   "get_schema",
-  "Holt das Ninox-Schema für eine bestimmte Tabelle: Felder, Feldtypen, Formeln, Verknüpfungen. Nutze list_modules um die verfügbaren Tabellen-IDs zu sehen.",
+  "Holt das VOLLSTÄNDIGE Ninox-Schema für eine Tabelle: Felder, Feldtypen, Formeln, Buttons, Sichtbarkeitsbedingungen, Verknüpfungen. Nutze list_modules um die verfügbaren Tabellen-IDs zu sehen.",
   {
     tableId: z
       .string()
@@ -255,11 +269,20 @@ server.tool(
   },
   async ({ tableId }) => {
     try {
+      // Try full schema first (includes formulas, buttons, visibility)
+      const fullSchema = await ninoxClient.getFullTableSchema(tableId);
+      if (fullSchema) {
+        const markdown = formatFullSchemaAsMarkdown(fullSchema);
+        return {
+          content: [{ type: "text", text: markdown }],
+        };
+      }
+
+      // Fallback to /tables endpoint
       const schema = await ninoxClient.getTableSchema(tableId);
       const markdown = formatSchemaAsMarkdown(schema);
-
       return {
-        content: [{ type: "text", text: markdown }],
+        content: [{ type: "text", text: markdown + "\n_⚠️ Fallback: Nur Datenfelder, keine Formeln/Buttons._\n" }],
       };
     } catch (error) {
       return {
@@ -359,38 +382,63 @@ server.tool(
         }
       }
 
-      // 2. Get schemas for related tables
+      // 2. Get schemas for related tables (full schema with formulas!)
       if (relatedTableIds.length > 0) {
         fullText += `---\n\n# Schema\n\n`;
         for (const tableId of relatedTableIds) {
           try {
-            const schema = await ninoxClient.getTableSchema(tableId);
-            fullText += formatSchemaAsMarkdown(schema);
+            const fullSchema = await ninoxClient.getFullTableSchema(tableId);
+            if (fullSchema) {
+              fullText += formatFullSchemaAsMarkdown(fullSchema);
+            } else {
+              // Fallback
+              const schema = await ninoxClient.getTableSchema(tableId);
+              fullText += formatSchemaAsMarkdown(schema);
+            }
           } catch (err) {
             fullText += `_Fehler beim Laden von Tabelle ${tableId}: ${err instanceof Error ? err.message : String(err)}_\n\n`;
           }
         }
       } else {
-        // Fallback: try to find tables by name matching
-        const allTables = await ninoxClient.listTables();
-        const matchingTables = allTables.filter(
-          (t) =>
-            t.name.toLowerCase().includes(moduleName.toLowerCase()) ||
-            moduleName.toLowerCase().includes(t.name.toLowerCase())
-        );
+        // Fallback: try to find tables by name matching against full schema
+        try {
+          const fullDbSchema = await ninoxClient.getFullDatabaseSchema();
+          const matchingTables = Object.entries(fullDbSchema.types || {}).filter(
+            ([, t]) =>
+              t.caption.toLowerCase().includes(moduleName.toLowerCase()) ||
+              moduleName.toLowerCase().includes(t.caption.toLowerCase())
+          );
 
-        if (matchingTables.length > 0) {
-          fullText += `---\n\n# Schema (automatisch gefunden via Name-Matching)\n\n`;
-          for (const table of matchingTables) {
-            try {
-              const schema = await ninoxClient.getTableSchema(table.id);
-              fullText += formatSchemaAsMarkdown(schema);
-            } catch (err) {
-              fullText += `_Fehler beim Laden von Tabelle ${table.id}: ${err instanceof Error ? err.message : String(err)}_\n\n`;
+          if (matchingTables.length > 0) {
+            fullText += `---\n\n# Schema (automatisch gefunden via Name-Matching)\n\n`;
+            for (const [tableId, table] of matchingTables) {
+              fullText += formatFullSchemaAsMarkdown({ id: tableId, ...table });
             }
+          } else {
+            fullText += `_Keine passenden Tabellen gefunden. Nutze list_modules für eine Übersicht und get_schema für einzelne Tabellen._\n`;
           }
-        } else {
-          fullText += `_Keine passenden Tabellen gefunden. Nutze list_modules für eine Übersicht und get_schema für einzelne Tabellen._\n`;
+        } catch (err) {
+          // Final fallback to /tables
+          const allTables = await ninoxClient.listTables();
+          const matchingTables = allTables.filter(
+            (t) =>
+              t.name.toLowerCase().includes(moduleName.toLowerCase()) ||
+              moduleName.toLowerCase().includes(t.name.toLowerCase())
+          );
+
+          if (matchingTables.length > 0) {
+            fullText += `---\n\n# Schema (Fallback - ohne Formeln)\n\n`;
+            for (const table of matchingTables) {
+              try {
+                const schema = await ninoxClient.getTableSchema(table.id);
+                fullText += formatSchemaAsMarkdown(schema);
+              } catch (e) {
+                fullText += `_Fehler beim Laden von Tabelle ${table.id}_\n\n`;
+              }
+            }
+          } else {
+            fullText += `_Keine passenden Tabellen gefunden._\n`;
+          }
         }
       }
 
