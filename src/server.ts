@@ -68,18 +68,73 @@ function formatSchemaAsMarkdown(schema: NinoxTableSchema): string {
 
   if (schema.fields && schema.fields.length > 0) {
     md += `### Felder\n\n`;
-    md += `| Feld-ID | Feldname | Typ | Details |\n`;
-    md += `|---------|----------|-----|---------|\n`;
 
     for (const field of schema.fields) {
-      let details = "";
+      md += `#### ${field.name} (ID: \`${field.id}\`, Typ: \`${field.type}\`)\n`;
+
+      // Choice-Optionen
       if (field.type === "choice" && field.choices) {
-        details = `Optionen: ${field.choices.map((c) => c.caption).join(", ")}`;
+        md += `- **Optionen:** ${field.choices.map((c) => c.caption).join(", ")}\n`;
       }
-      md += `| ${field.id} | ${field.name} | ${field.type} | ${details} |\n`;
+
+      // Formelfelder
+      if (field.formula) {
+        md += `- **Formel:** \`\`\`\n${field.formula}\n\`\`\`\n`;
+      }
+
+      // Button "Bei Klick" Ausführungscode
+      if (field.onClick) {
+        md += `- **Bei Klick (onClick):** \`\`\`\n${field.onClick}\n\`\`\`\n`;
+      }
+
+      // Trigger-Felder (nach Änderung, nach Erstellen, etc.)
+      if (field.onUpdate) {
+        md += `- **Nach Änderung (onUpdate):** \`\`\`\n${field.onUpdate}\n\`\`\`\n`;
+      }
+      if (field.onCreate) {
+        md += `- **Nach Erstellen (onCreate):** \`\`\`\n${field.onCreate}\n\`\`\`\n`;
+      }
+
+      // Sichtbarkeitsbedingung ("Feld nur anzeigen wenn")
+      if (field.displayCondition) {
+        md += `- **Nur anzeigen wenn:** \`${field.displayCondition}\`\n`;
+      }
+
+      // Required / Pflichtfeld
+      if (field.required) {
+        md += `- **Pflichtfeld:** ja\n`;
+      }
+
+      // Default-Wert
+      if (field.defaultValue !== undefined && field.defaultValue !== null && field.defaultValue !== "") {
+        md += `- **Standardwert:** \`${field.defaultValue}\`\n`;
+      }
+
+      // Referenz auf andere Tabelle (Verknüpfung)
+      if (field.referencedTable) {
+        md += `- **Verknüpft mit Tabelle:** \`${field.referencedTable}\`\n`;
+      }
+
+      // Alle weiteren unbekannten Properties loggen (für Debugging)
+      const knownKeys = new Set([
+        "id", "name", "type", "choices", "formula", "onClick", 
+        "onUpdate", "onCreate", "displayCondition", "required", 
+        "defaultValue", "referencedTable"
+      ]);
+      const extraProps: Record<string, unknown> = {};
+      for (const [key, value] of Object.entries(field)) {
+        if (!knownKeys.has(key) && value !== undefined && value !== null && value !== "" && value !== false) {
+          extraProps[key] = value;
+        }
+      }
+      if (Object.keys(extraProps).length > 0) {
+        md += `- **Weitere Eigenschaften:** \`${JSON.stringify(extraProps)}\`\n`;
+      }
+
+      md += `\n`;
     }
-    md += "\n";
-    md += `_Tipp: Feld-IDs (${schema.fields.map(f => f.id).join(", ")}) sind stabil und ändern sich nie. Nutze sie für API-Filter._\n\n`;
+
+    md += `_Feld-IDs (${schema.fields.map(f => f.id).join(", ")}) sind stabil und ändern sich nie._\n\n`;
   } else {
     md += `_Keine Felder definiert._\n\n`;
   }
