@@ -2,12 +2,18 @@
  * DVBase MCP Server – Entry Point
  * 
  * Startet den MCP Server mit Streamable HTTP Transport.
- * Geschützt durch Bearer Token (MCP_AUTH_TOKEN in .env).
+ * 
+ * Sicherheit (2 Schichten):
+ * 1. Secret Path – URL ist nicht erratbar (/mcp/<SECRET>)
+ * 2. IP-Whitelist – nur Anthropic's Claude.ai IP-Ranges werden akzeptiert
  * 
  * Verbindung:
- * - Claude.ai:      https://your-domain.de/mcp (Header: Authorization: Bearer <token>)
- * - Claude Desktop:  http://localhost:3001/mcp
- * - Health Check:    http://localhost:3001/health (kein Auth nötig)
+ * - Claude.ai:      https://mcp.digital-vereinfacht.de/mcp/<MCP_SECRET_PATH>
+ * - Health Check:    https://mcp.digital-vereinfacht.de/health
+ * 
+ * Env-Variablen:
+ * - MCP_SECRET_PATH:  Geheimer Pfad-Suffix (z.B. "a7xK9m3Qp2wR8zF")
+ * - IP_WHITELIST_ENABLED: "true" (default) oder "false" zum Deaktivieren
  */
 
 import express from "express";
@@ -18,60 +24,109 @@ import { createServer, PORT } from "./server.js";
 const app = express();
 app.use(express.json());
 
-// ─── Auth Configuration ──────────────────────────────────────────────
+// ─── Security Configuration ─────────────────────────────────────────
 
-const MCP_AUTH_TOKEN = process.env.MCP_AUTH_TOKEN || "";
+const MCP_SECRET_PATH = process.env.MCP_SECRET_PATH || "";
+const IP_WHITELIST_ENABLED = process.env.IP_WHITELIST_ENABLED !== "false";
 
-if (!MCP_AUTH_TOKEN) {
-  console.warn(`
-  ⚠️  WARNUNG: MCP_AUTH_TOKEN ist nicht gesetzt!
-  Der Server ist UNGESCHÜTZT – jeder mit der URL kann auf eure Ninox-Daten zugreifen.
-  Setze MCP_AUTH_TOKEN in der .env Datei.
+// Trust proxy (Coolify/Traefik setzen X-Forwarded-For)
+app.set("trust proxy", true);
+
+if (!MCP_SECRET_PATH) {
+  console.error(`
+  ❌ FEHLER: MCP_SECRET_PATH ist nicht gesetzt!
+  Der Server startet NICHT ohne Secret Path.
+  Setze MCP_SECRET_PATH als Environment Variable (min. 16 Zeichen).
   `);
+  process.exit(1);
+}
+
+if (MCP_SECRET_PATH.length < 16) {
+  console.error(`
+  ❌ FEHLER: MCP_SECRET_PATH ist zu kurz (${MCP_SECRET_PATH.length} Zeichen).
+  Mindestens 16 Zeichen für ausreichende Sicherheit.
+  `);
+  process.exit(1);
+}
+
+const MCP_ROUTE = `/mcp/${MCP_SECRET_PATH}`;
+
+// ─── IP Whitelist (Anthropic's Claude.ai Outbound IPs) ──────────────
+
+/**
+ * Anthropic publiziert feste IP-Ranges für Claude.ai MCP-Verbindungen.
+ * Quelle: https://docs.anthropic.com/en/docs/build-with-claude/mcp/remote-mcp-servers
+ * 
+ * Primary Range: 160.79.104.0/21
+ * Legacy IPs: ab 15. Jan 2026 deprecated, hier trotzdem drin als Fallback
+ */
+const ANTHROPIC_IP_RANGES = {
+  // CIDR: 160.79.104.0 – 160.79.111.255
+  primary: { network: 0xA04F6800, mask: 0xFFFFF800 }, // 160.79.104.0/21
+  legacy: new Set([
+    "34.162.46.92",
+    "34.162.102.82",
+    "34.162.136.91",
+    "34.162.142.92",
+    "34.162.183.95",
+  ]),
+};
+
+function ipToInt(ip: string): number {
+  const parts = ip.split(".").map(Number);
+  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
+}
+
+function isAnthropicIp(ip: string): boolean {
+  // IPv6-mapped IPv4 (::ffff:1.2.3.4) → extrahiere IPv4-Teil
+  const cleanIp = ip.replace(/^::ffff:/, "");
+
+  // Localhost für lokale Entwicklung
+  if (cleanIp === "127.0.0.1" || cleanIp === "::1" || cleanIp === "localhost") {
+    return !IP_WHITELIST_ENABLED;
+  }
+
+  // Primary CIDR check
+  const ipInt = ipToInt(cleanIp);
+  if ((ipInt & ANTHROPIC_IP_RANGES.primary.mask) === ANTHROPIC_IP_RANGES.primary.network) {
+    return true;
+  }
+
+  // Legacy IPs
+  if (ANTHROPIC_IP_RANGES.legacy.has(cleanIp)) {
+    return true;
+  }
+
+  return false;
 }
 
 /**
- * Auth Middleware – prüft den Bearer Token.
- * Wird auf alle /mcp Endpoints angewandt.
- * /health bleibt offen (für Monitoring).
+ * IP-Whitelist Middleware – blockiert alle Requests die nicht von 
+ * Anthropic's Claude.ai kommen.
  */
-function authMiddleware(
+function ipWhitelistMiddleware(
   req: express.Request,
   res: express.Response,
   next: express.NextFunction
 ): void {
-  // Kein Token konfiguriert = Auth deaktiviert (nur für lokale Entwicklung!)
-  if (!MCP_AUTH_TOKEN) {
+  if (!IP_WHITELIST_ENABLED) {
     next();
     return;
   }
 
-  const authHeader = req.headers.authorization;
+  const clientIp = req.ip || req.socket.remoteAddress || "";
 
-  if (!authHeader) {
-    res.status(401).json({
-      jsonrpc: "2.0",
-      error: { code: -32001, message: "Unauthorized: Authorization header fehlt" },
-      id: null,
-    });
+  if (isAnthropicIp(clientIp)) {
+    next();
     return;
   }
 
-  // Akzeptiert "Bearer <token>"
-  const token = authHeader.startsWith("Bearer ")
-    ? authHeader.slice(7)
-    : authHeader;
-
-  if (token !== MCP_AUTH_TOKEN) {
-    res.status(403).json({
-      jsonrpc: "2.0",
-      error: { code: -32001, message: "Forbidden: Ungültiger Token" },
-      id: null,
-    });
-    return;
-  }
-
-  next();
+  console.warn(`🚫 Blocked request from unauthorized IP: ${clientIp} → ${req.path}`);
+  res.status(403).json({
+    jsonrpc: "2.0",
+    error: { code: -32001, message: "Forbidden" },
+    id: null,
+  });
 }
 
 // ─── Session Management ────────────────────────────────────────────────
@@ -111,7 +166,7 @@ async function handleMcpRequest(req: express.Request, res: express.Response) {
       const newSessionId = transport.sessionId;
       if (newSessionId) {
         transports.set(newSessionId, transport);
-        console.log(`✅ Neue Session: ${newSessionId}`);
+        console.log(`✅ Neue Session: ${newSessionId} (IP: ${req.ip})`);
 
         transport.onclose = () => {
           transports.delete(newSessionId);
@@ -142,10 +197,10 @@ async function handleMcpRequest(req: express.Request, res: express.Response) {
   }
 }
 
-// Auth auf alle /mcp Routen anwenden
-app.post("/mcp", authMiddleware, handleMcpRequest);
-app.get("/mcp", authMiddleware, handleMcpRequest);
-app.delete("/mcp", authMiddleware, async (req, res) => {
+// Security-Middleware + MCP Handler auf Secret Path
+app.post(MCP_ROUTE, ipWhitelistMiddleware, handleMcpRequest);
+app.get(MCP_ROUTE, ipWhitelistMiddleware, handleMcpRequest);
+app.delete(MCP_ROUTE, ipWhitelistMiddleware, async (req, res) => {
   const sessionId = req.headers["mcp-session-id"] as string | undefined;
   if (sessionId && transports.has(sessionId)) {
     const transport = transports.get(sessionId)!;
@@ -157,15 +212,26 @@ app.delete("/mcp", authMiddleware, async (req, res) => {
   }
 });
 
-// ─── Health Check (kein Auth) ─────────────────────────────────────────
+// Catch-all für /mcp ohne Secret → 404 (kein Hinweis dass was existiert)
+app.all("/mcp", (_req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+app.all("/mcp/*", (_req, res) => {
+  res.status(404).json({ error: "Not found" });
+});
+
+// ─── Health Check (kein Auth, keine sensitiven Infos) ────────────────
 
 app.get("/health", (_req, res) => {
   res.json({
     status: "ok",
     server: "dvbase-mcp",
-    version: "1.0.0",
+    version: "1.1.0",
     activeSessions: transports.size,
-    authEnabled: !!MCP_AUTH_TOKEN,
+    security: {
+      secretPath: true,
+      ipWhitelist: IP_WHITELIST_ENABLED,
+    },
   });
 });
 
@@ -173,13 +239,13 @@ app.get("/health", (_req, res) => {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`
-  ╔══════════════════════════════════════════════╗
-  ║  DVBase MCP Server v1.0.0                    ║
-  ║  Digital Vereinfacht GmbH                    ║
-  ╠══════════════════════════════════════════════╣
-  ║  MCP:    http://0.0.0.0:${PORT}/mcp${" ".repeat(22 - String(PORT).length)}║
-  ║  Health: http://0.0.0.0:${PORT}/health${" ".repeat(19 - String(PORT).length)}║
-  ║  Auth:   ${MCP_AUTH_TOKEN ? "✅ AKTIV" : "⚠️  DEAKTIVIERT"}${" ".repeat(MCP_AUTH_TOKEN ? 28 : 24)}║
-  ╚══════════════════════════════════════════════╝
+  ╔══════════════════════════════════════════════════╗
+  ║  DVBase MCP Server v1.1.0                        ║
+  ║  Digital Vereinfacht GmbH                        ║
+  ╠══════════════════════════════════════════════════╣
+  ║  Health:       http://0.0.0.0:${PORT}/health          ║
+  ║  IP-Whitelist: ${IP_WHITELIST_ENABLED ? "✅ AKTIV (Anthropic IPs only)" : "⚠️  DEAKTIVIERT"}      ║
+  ║  Secret Path:  ✅ AKTIV (${MCP_SECRET_PATH.slice(0, 4)}...${MCP_SECRET_PATH.slice(-4)})            ║
+  ╚══════════════════════════════════════════════════╝
   `);
 });
