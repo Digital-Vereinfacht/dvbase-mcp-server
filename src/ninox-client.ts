@@ -56,6 +56,54 @@ export interface NinoxTableSchema {
 }
 
 /**
+ * Full database schema as returned by GET /schema.
+ * This includes ALL field properties: formulas, buttons, visibility, etc.
+ */
+export interface NinoxFullSchema {
+  seq: number;
+  version: number;
+  nextTypeId: number;
+  types: Record<string, NinoxFullType>;
+}
+
+export interface NinoxFullType {
+  nextFieldId: number;
+  caption: string;
+  captions?: Record<string, string>;
+  icon?: string;
+  hidden?: boolean;
+  fields: Record<string, NinoxFullField>;
+  [key: string]: unknown;
+}
+
+export interface NinoxFullField {
+  base: string;         // Field type: "fn", "string", "number", "multi", "ref", "rev", "user", etc.
+  caption: string;      // Human-readable field name
+  captions?: Record<string, string>;
+  required?: boolean;
+  order?: number;
+  visibility?: string;  // "Nur anzeigen wenn" – references another field ID
+  fn?: string;          // Formula code (for base="fn" fields)
+  width?: number;
+  formWidth?: number;
+  height?: number;
+  uuid?: string;
+  globalSearch?: boolean;
+  hasIndex?: boolean;
+  tooltips?: Record<string, string>;
+  labelPosition?: string;
+  style?: string;
+  values?: Record<string, { caption?: string; color?: string; order?: number; icon?: { icon?: string; color?: string } }>;
+  ref?: string;           // Referenced table ID (for base="ref")
+  reverseField?: string;  // Reverse field ID (for base="rev")
+  [key: string]: unknown;
+}
+
+export interface NinoxFullTableSchema extends NinoxFullType {
+  id: string;
+}
+
+/**
  * Record as returned by GET /tables/{tid}/records
  */
 export interface NinoxRecord {
@@ -159,8 +207,30 @@ export class NinoxClient {
   }
 
   // ========================================
-  // Record Endpoints
+  // Full Schema Endpoint (includes formulas, buttons, visibility)
   // ========================================
+
+  /**
+   * Get the FULL database schema via GET /schema.
+   * Unlike /tables, this includes formula fields, button code,
+   * visibility conditions, and all field properties.
+   * 
+   * Returns raw schema object:
+   * { types: { "A": { caption, fields: { "J": { base, caption, fn?, visibility?, ... } } } } }
+   */
+  async getFullDatabaseSchema(): Promise<NinoxFullSchema> {
+    return this.request<NinoxFullSchema>("/schema");
+  }
+
+  /**
+   * Extract a single table's schema from the full schema.
+   */
+  async getFullTableSchema(tableId: string): Promise<NinoxFullTableSchema | null> {
+    const schema = await this.getFullDatabaseSchema();
+    const table = schema.types?.[tableId];
+    if (!table) return null;
+    return { id: tableId, ...table };
+  }
 
   /**
    * Get records from a table.
