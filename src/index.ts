@@ -13,7 +13,7 @@
 import express from "express";
 import { randomUUID } from "crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { server, PORT } from "./server.js";
+import { createServer, PORT } from "./server.js";
 
 const app = express();
 app.use(express.json());
@@ -105,7 +105,7 @@ async function handleMcpRequest(req: express.Request, res: express.Response) {
         sessionIdGenerator: () => randomUUID(),
       });
 
-      await server.connect(transport);
+      await createServer().connect(transport);
       await transport.handleRequest(req, res, req.body);
 
       const newSessionId = transport.sessionId;

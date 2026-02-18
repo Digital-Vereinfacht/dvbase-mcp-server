@@ -43,12 +43,21 @@ const contextStore = DOKU_TABLE_ID
   ? new ContextStore(ninoxClient, DOKU_TABLE_ID)
   : null;
 
-// ─── MCP Server ────────────────────────────────────────────────────────
+// ─── MCP Server Factory ────────────────────────────────────────────────
+// Jede Session bekommt eine eigene McpServer-Instanz,
+// weil das MCP SDK nur eine Transport-Verbindung pro Server erlaubt.
 
-const server = new McpServer({
-  name: "dvbase",
-  version: "1.0.0",
-});
+function createServer(): McpServer {
+  const server = new McpServer({
+    name: "dvbase",
+    version: "1.0.0",
+  });
+
+  registerTools(server);
+  return server;
+}
+
+function registerTools(server: McpServer): void {
 
 // ─── Helper: Format Schema as Markdown ─────────────────────────────────
 
@@ -350,6 +359,8 @@ server.tool(
   }
 );
 
-// ─── Export server for transport setup ──────────────────────────────────
+} // end registerTools
 
-export { server, PORT };
+// ─── Export factory for transport setup ──────────────────────────────────
+
+export { createServer, PORT };
