@@ -91,9 +91,8 @@ export class NinoxClient {
 
   constructor(config: NinoxConfig) {
     this.config = config;
-    this.baseUrl =
-      config.baseUrl ||
-      `https://api.ninox.com/v1/teams/${config.teamId}/databases/${config.databaseId}`;
+    const apiRoot = config.baseUrl || "https://api.ninox.com/v1";
+    this.baseUrl = `${apiRoot}/teams/${config.teamId}/databases/${config.databaseId}`;
   }
 
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {

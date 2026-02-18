@@ -21,6 +21,7 @@ import { ContextStore, ModuleContext } from "./context-store.js";
 const NINOX_API_KEY = process.env.NINOX_API_KEY || "";
 const NINOX_TEAM_ID = process.env.NINOX_TEAM_ID || "";
 const NINOX_DATABASE_ID = process.env.NINOX_DATABASE_ID || "";
+const NINOX_BASE_URL = process.env.NINOX_BASE_URL || ""; // Private Cloud: https://digital-vereinfacht.ninoxdb.de/v1
 const DOKU_TABLE_ID = process.env.DOKU_TABLE_ID || "";
 const PORT = parseInt(process.env.PORT || "3001", 10);
 
@@ -37,6 +38,7 @@ const ninoxClient = new NinoxClient({
   apiKey: NINOX_API_KEY,
   teamId: NINOX_TEAM_ID,
   databaseId: NINOX_DATABASE_ID,
+  ...(NINOX_BASE_URL && { baseUrl: NINOX_BASE_URL }),
 });
 
 const contextStore = DOKU_TABLE_ID
