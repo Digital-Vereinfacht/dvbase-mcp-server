@@ -292,6 +292,47 @@ export class NinoxClient {
   }
 
   // ========================================
+  // Record Write Endpoints
+  // ========================================
+
+  /**
+   * Create a new record in a table.
+   * POST /tables/{tableId}/records
+   * 
+   * @param tableId - The Ninox table ID (e.g., "A", "B2")
+   * @param fields - Object with field IDs as keys and values
+   * @returns The created record with its new ID
+   */
+  async createRecord(tableId: string, fields: Record<string, unknown>): Promise<NinoxRecord> {
+    return this.request<NinoxRecord>(`/tables/${tableId}/records`, {
+      method: "POST",
+      body: JSON.stringify({ fields }),
+    });
+  }
+
+  /**
+   * Update an existing record.
+   * PUT /tables/${tableId}/records/${recordId}
+   */
+  async updateRecord(tableId: string, recordId: number, fields: Record<string, unknown>): Promise<NinoxRecord> {
+    return this.request<NinoxRecord>(`/tables/${tableId}/records/${recordId}`, {
+      method: "PUT",
+      body: JSON.stringify({ fields }),
+    });
+  }
+
+  /**
+   * Create multiple records at once.
+   * POST /tables/{tableId}/records
+   */
+  async createRecords(tableId: string, records: Array<{ fields: Record<string, unknown> }>): Promise<NinoxRecord[]> {
+    return this.request<NinoxRecord[]>(`/tables/${tableId}/records`, {
+      method: "POST",
+      body: JSON.stringify(records),
+    });
+  }
+
+  // ========================================
   // Query Endpoint (Ninox Script)
   // ========================================
 
