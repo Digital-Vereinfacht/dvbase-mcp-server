@@ -498,6 +498,89 @@ server.tool(
   }
 );
 
+// ─── Tool: create_record ──────────────────────────────────────────────
+
+server.tool(
+  "create_record",
+  "Legt einen neuen Datensatz in einer Ninox-Tabelle an. Nutze IMMER zuerst get_schema um die korrekten Feld-IDs und -Typen zu ermitteln. Felder werden über ihre IDs (z.B. 'A1', 'B3') befüllt, NICHT über ihre Namen.",
+  {
+    tableId: z
+      .string()
+      .describe("Die Ninox Tabellen-ID (z.B. 'A', 'B2'). Nutze list_modules um IDs zu sehen."),
+    fields: z
+      .record(z.unknown())
+      .describe(
+        'Objekt mit Feld-IDs als Keys und Werten. Beispiel: {"A1": "Maler hat Gerüst nicht aufgebaut", "A2": "2026-02-19", "A3": 1}. Nutze get_schema für die korrekten Feld-IDs.'
+      ),
+  },
+  async ({ tableId, fields }) => {
+    try {
+      const result = await ninoxClient.createRecord(tableId, fields);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✅ Datensatz angelegt in Tabelle \`${tableId}\`\n\n**Record ID:** ${result.id}\n\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Fehler beim Anlegen des Datensatzes in Tabelle "${tableId}": ${error instanceof Error ? error.message : String(error)}\n\n**Tipp:** Nutze get_schema um die korrekten Feld-IDs und -Typen zu prüfen.`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ─── Tool: update_record ──────────────────────────────────────────────
+
+server.tool(
+  "update_record",
+  "Aktualisiert einen bestehenden Datensatz. Nutze query_data oder get_schema um die Record-ID und Feld-IDs zu ermitteln.",
+  {
+    tableId: z
+      .string()
+      .describe("Die Ninox Tabellen-ID (z.B. 'A', 'B2')."),
+    recordId: z
+      .number()
+      .describe("Die Record-ID (Nummer) des zu aktualisierenden Datensatzes."),
+    fields: z
+      .record(z.unknown())
+      .describe('Objekt mit Feld-IDs und neuen Werten. Nur angegebene Felder werden geändert.'),
+  },
+  async ({ tableId, recordId, fields }) => {
+    try {
+      const result = await ninoxClient.updateRecord(tableId, recordId, fields);
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: `✅ Datensatz ${recordId} in Tabelle \`${tableId}\` aktualisiert\n\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\``,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Fehler beim Aktualisieren von Record ${recordId} in Tabelle "${tableId}": ${error instanceof Error ? error.message : String(error)}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
 } // end registerTools
 
 // ─── Export factory for transport setup ──────────────────────────────────
