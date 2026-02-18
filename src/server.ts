@@ -70,34 +70,55 @@ function formatSchemaAsMarkdown(schema: NinoxTableSchema): string {
     md += `### Felder\n\n`;
 
     for (const field of schema.fields) {
-      md += `#### ${field.name} (ID: \`${field.id}\`, Typ: \`${field.type}\`)\n`;
+      // Ninox verwendet "caption" für den Namen und "base" für den Typ
+      const fieldName = field.name || field.caption || field.id;
+      const fieldType = field.type || field.base || "unknown";
 
-      // Choice-Optionen
-      if (field.type === "choice" && field.choices) {
-        md += `- **Optionen:** ${field.choices.map((c) => c.caption).join(", ")}\n`;
+      md += `#### ${fieldName} (ID: \`${field.id}\`, Typ: \`${fieldType}\`)\n`;
+
+      // Formelfelder (Ninox: "fn")
+      if (field.fn) {
+        md += `- **Formel:** \`\`\`\n${field.fn}\n\`\`\`\n`;
       }
 
-      // Formelfelder
-      if (field.formula) {
-        md += `- **Formel:** \`\`\`\n${field.formula}\n\`\`\`\n`;
+      // Choice/Multi-Optionen (Ninox: "values" Objekt)
+      if (field.values && typeof field.values === "object") {
+        const values = field.values as Record<string, { caption?: string; color?: string; icon?: { icon?: string } }>;
+        const options = Object.entries(values)
+          .sort((a, b) => ((a[1] as any).order ?? 0) - ((b[1] as any).order ?? 0))
+          .map(([id, v]) => {
+            let opt = `${v.caption || id}`;
+            if (v.icon?.icon) opt += ` (${v.icon.icon})`;
+            return opt;
+          });
+        md += `- **Optionen:** ${options.join(", ")}\n`;
       }
 
-      // Button "Bei Klick" Ausführungscode
-      if (field.onClick) {
-        md += `- **Bei Klick (onClick):** \`\`\`\n${field.onClick}\n\`\`\`\n`;
+      // Legacy choices Array (falls doch vorhanden)
+      if (field.choices && Array.isArray(field.choices)) {
+        md += `- **Optionen:** ${field.choices.map((c: any) => c.caption).join(", ")}\n`;
       }
 
-      // Trigger-Felder (nach Änderung, nach Erstellen, etc.)
-      if (field.onUpdate) {
-        md += `- **Nach Änderung (onUpdate):** \`\`\`\n${field.onUpdate}\n\`\`\`\n`;
+      // Sichtbarkeitsbedingung
+      if (field.displayIf) {
+        md += `- **Nur anzeigen wenn:** \`${field.displayIf}\`\n`;
       }
-      if (field.onCreate) {
-        md += `- **Nach Erstellen (onCreate):** \`\`\`\n${field.onCreate}\n\`\`\`\n`;
+      if (field.visibleIf) {
+        md += `- **Nur anzeigen wenn:** \`${field.visibleIf}\`\n`;
+      }
+      if (field.hideIf) {
+        md += `- **Ausblenden wenn:** \`${field.hideIf}\`\n`;
       }
 
-      // Sichtbarkeitsbedingung ("Feld nur anzeigen wenn")
-      if (field.displayCondition) {
-        md += `- **Nur anzeigen wenn:** \`${field.displayCondition}\`\n`;
+      // Trigger/Events
+      if (field.onOpen) {
+        md += `- **Bei Öffnen:** \`\`\`\n${field.onOpen}\n\`\`\`\n`;
+      }
+      if (field.afterUpdate) {
+        md += `- **Nach Änderung:** \`\`\`\n${field.afterUpdate}\n\`\`\`\n`;
+      }
+      if (field.onChange) {
+        md += `- **Bei Änderung:** \`\`\`\n${field.onChange}\n\`\`\`\n`;
       }
 
       // Required / Pflichtfeld
@@ -105,21 +126,34 @@ function formatSchemaAsMarkdown(schema: NinoxTableSchema): string {
         md += `- **Pflichtfeld:** ja\n`;
       }
 
-      // Default-Wert
-      if (field.defaultValue !== undefined && field.defaultValue !== null && field.defaultValue !== "") {
-        md += `- **Standardwert:** \`${field.defaultValue}\`\n`;
+      // Referenz auf andere Tabelle
+      if (field.ref) {
+        md += `- **Verknüpft mit Tabelle:** \`${field.ref}\`\n`;
       }
-
-      // Referenz auf andere Tabelle (Verknüpfung)
       if (field.referencedTable) {
         md += `- **Verknüpft mit Tabelle:** \`${field.referencedTable}\`\n`;
       }
 
-      // Alle weiteren unbekannten Properties loggen (für Debugging)
+      // Label-Position (z.B. "none" = Überschrift/Layout-Feld)
+      if (field.labelPosition) {
+        md += `- **Label-Position:** ${field.labelPosition}\n`;
+      }
+
+      // Styling
+      if (field.style) {
+        md += `- **Style:** \`${field.style}\`\n`;
+      }
+
+      // Alle weiteren Properties die wir nicht explizit behandeln
       const knownKeys = new Set([
-        "id", "name", "type", "choices", "formula", "onClick", 
-        "onUpdate", "onCreate", "displayCondition", "required", 
-        "defaultValue", "referencedTable"
+        "id", "name", "type", "base", "caption", "captions", "fn",
+        "values", "choices", "displayIf", "visibleIf", "hideIf",
+        "onOpen", "afterUpdate", "onChange", "required", "ref",
+        "referencedTable", "labelPosition", "style",
+        // Layout/Meta - weniger relevant für Debugging
+        "order", "width", "formWidth", "height", "uuid",
+        "globalSearch", "hasIndex", "tooltips", "nextChoiceId",
+        "multiRenderer"
       ]);
       const extraProps: Record<string, unknown> = {};
       for (const [key, value] of Object.entries(field)) {
