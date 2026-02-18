@@ -88,8 +88,7 @@ function isAnthropicIp(ip: string): boolean {
 
   // Primary CIDR check
   const ipInt = ipToInt(cleanIp);
-  if ((ipInt & ANTHROPIC_IP_RANGES.primary.mask) === ANTHROPIC_IP_RANGES.primary.network) {
-    return true;
+if (((ipInt & ANTHROPIC_IP_RANGES.primary.mask) >>> 0) === ANTHROPIC_IP_RANGES.primary.network) {    return true;
   }
 
   // Legacy IPs
