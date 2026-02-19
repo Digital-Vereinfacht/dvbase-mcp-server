@@ -9,10 +9,12 @@
  * - get_schema: Holt das Schema (Tabellen, Felder, Formeln) für ein Modul
  * - get_context: Holt Entwickler-Kontextwissen (Prozesse, Stolperfallen, n8n-Deps)
  * - get_full_module_info: Kombiniert Schema + Kontext für ein Modul (empfohlen für Debugging)
+ * - get_file: Lädt Dateien aus Ninox-Records, extrahiert Text aus .docx Templates
  */
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import mammoth from "mammoth";
 import { NinoxClient, NinoxTableSchema, NinoxFullTableSchema, NinoxFullField } from "./ninox-client.js";
 import { ContextStore, ModuleContext } from "./context-store.js";
 
@@ -575,6 +577,106 @@ server.tool(
             text: `Fehler beim Aktualisieren von Record ${recordId} in Tabelle "${tableId}": ${error instanceof Error ? error.message : String(error)}`,
           },
         ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ─── Tool: get_file ─────────────────────────────────────────────────
+
+server.tool(
+  "get_file",
+  "Lädt eine Datei aus einem Ninox-Record herunter. Bei Word-Dateien (.docx) wird der Text automatisch extrahiert – ideal um z.B. Carbon-Templates zu inspizieren und Platzhalter oder hardcodierte Werte zu finden. Nutze query_data um vorher die Record-ID und den Dateinamen zu ermitteln.",
+  {
+    tableId: z
+      .string()
+      .describe("Die Ninox Tabellen-ID (z.B. 'A', 'B2'). Nutze list_modules um IDs zu sehen."),
+    recordId: z
+      .number()
+      .describe("Die Record-ID (Nummer) des Datensatzes mit der Datei."),
+    fieldId: z
+      .string()
+      .describe("Die Feld-ID des Datei-Felds (z.B. 'C3'). Nutze get_schema um das Datei-Feld zu finden."),
+    fileName: z
+      .string()
+      .describe("Der exakte Dateiname inkl. Endung (z.B. 'Angebot_Template.docx'). Nutze query_data um den Dateinamen aus dem Record zu lesen."),
+  },
+  async ({ tableId, recordId, fieldId, fileName }) => {
+    try {
+      const { buffer, contentType } = await ninoxClient.downloadFile(tableId, recordId, fieldId, fileName);
+      const lowerName = fileName.toLowerCase();
+
+      // Word-Dokumente: Text extrahieren mit mammoth
+      if (lowerName.endsWith(".docx")) {
+        const result = await mammoth.extractRawText({ buffer });
+        const text = result.value;
+        const warnings = result.messages
+          .filter((m: any) => m.type === "warning")
+          .map((m: any) => m.message);
+
+        let response = `# Datei: ${fileName}\n`;
+        response += `**Typ:** Word-Dokument (.docx) | **Größe:** ${(buffer.length / 1024).toFixed(1)} KB\n`;
+        response += `**Quelle:** Tabelle \`${tableId}\`, Record ${recordId}, Feld \`${fieldId}\`\n\n`;
+        response += `## Extrahierter Text\n\n`;
+        response += text || "_Kein Text gefunden (möglicherweise nur Bilder/Tabellen)._";
+
+        if (warnings.length > 0) {
+          response += `\n\n## Warnungen bei Extraktion\n`;
+          for (const w of warnings) {
+            response += `- ${w}\n`;
+          }
+        }
+
+        // HTML extrahieren für bessere Struktur-Erkennung (Tabellen etc.)
+        const htmlResult = await mammoth.convertToHtml({ buffer });
+        if (htmlResult.value && htmlResult.value.includes("<table")) {
+          response += `\n\n## HTML-Struktur (enthält Tabellen)\n\n\`\`\`html\n${htmlResult.value}\n\`\`\``;
+        }
+
+        // Carbon-Template-Platzhalter erkennen
+        const placeholders = text.match(/\{[^}]+\}/g) || [];
+        const uniquePlaceholders = [...new Set(placeholders)];
+        if (uniquePlaceholders.length > 0) {
+          response += `\n\n## Erkannte Platzhalter (${uniquePlaceholders.length})\n\n`;
+          for (const ph of uniquePlaceholders.sort()) {
+            response += `- \`${ph}\`\n`;
+          }
+          response += `\n_Dies sind Carbon-Template-Variablen, die beim PDF-Generieren mit JSON-Daten befüllt werden._\n`;
+        }
+
+        return { content: [{ type: "text", text: response }] };
+      }
+
+      // Textbasierte Dateien direkt anzeigen
+      if (
+        lowerName.endsWith(".txt") || lowerName.endsWith(".csv") ||
+        lowerName.endsWith(".json") || lowerName.endsWith(".xml") ||
+        lowerName.endsWith(".html") || lowerName.endsWith(".htm") ||
+        contentType.startsWith("text/")
+      ) {
+        const text = buffer.toString("utf-8");
+        return {
+          content: [{
+            type: "text",
+            text: `# Datei: ${fileName}\n**Typ:** ${contentType} | **Größe:** ${(buffer.length / 1024).toFixed(1)} KB\n\n\`\`\`\n${text}\n\`\`\``,
+          }],
+        };
+      }
+
+      // Binärdateien: Metadaten zurückgeben
+      return {
+        content: [{
+          type: "text",
+          text: `# Datei: ${fileName}\n**Typ:** ${contentType} | **Größe:** ${(buffer.length / 1024).toFixed(1)} KB\n\n_Binärdatei – Textextraktion nur für .docx, .txt, .csv, .json, .xml möglich._`,
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: `Fehler beim Laden der Datei "${fileName}" aus Tabelle ${tableId}, Record ${recordId}, Feld ${fieldId}: ${error instanceof Error ? error.message : String(error)}\n\n**Tipps:**\n- Stimmt der Dateiname exakt? Nutze query_data um den Namen zu prüfen.\n- Ist das Feld-ID korrekt? Nutze get_schema um das Datei-Feld zu finden.\n- Hat der Record tatsächlich eine Datei in diesem Feld?`,
+        }],
         isError: true,
       };
     }
