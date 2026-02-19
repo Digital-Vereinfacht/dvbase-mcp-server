@@ -582,6 +582,41 @@ server.tool(
   }
 );
 
+// ─── Tool: list_files ────────────────────────────────────────────────
+
+server.tool(
+  "list_files",
+  "Listet alle Dateien auf, die an einem Ninox-Record angehängt sind. Nutze dies um den exakten Dateinamen für get_file zu ermitteln.",
+  {
+    tableId: z
+      .string()
+      .describe("Die Ninox Tabellen-ID (z.B. 'A', 'B2')."),
+    recordId: z
+      .number()
+      .describe("Die Record-ID (Nummer) des Datensatzes."),
+  },
+  async ({ tableId, recordId }) => {
+    try {
+      const result = await ninoxClient.listFiles(tableId, recordId);
+      const formatted = JSON.stringify(result, null, 2);
+      return {
+        content: [{
+          type: "text",
+          text: `# Dateien an Record ${recordId} (Tabelle ${tableId})\n\n\`\`\`json\n${formatted}\n\`\`\``,
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{
+          type: "text",
+          text: `Fehler beim Auflisten der Dateien: ${error instanceof Error ? error.message : String(error)}`,
+        }],
+        isError: true,
+      };
+    }
+  }
+);
+
 // ─── Tool: get_file ─────────────────────────────────────────────────
 
 server.tool(
@@ -594,16 +629,13 @@ server.tool(
     recordId: z
       .number()
       .describe("Die Record-ID (Nummer) des Datensatzes mit der Datei."),
-    fieldId: z
-      .string()
-      .describe("Die Feld-ID des Datei-Felds (z.B. 'C3'). Nutze get_schema um das Datei-Feld zu finden."),
     fileName: z
       .string()
       .describe("Der exakte Dateiname inkl. Endung (z.B. 'Angebot_Template.docx'). Nutze query_data um den Dateinamen aus dem Record zu lesen."),
   },
-  async ({ tableId, recordId, fieldId, fileName }) => {
+  async ({ tableId, recordId, fileName }) => {
     try {
-      const { buffer, contentType } = await ninoxClient.downloadFile(tableId, recordId, fieldId, fileName);
+      const { buffer, contentType } = await ninoxClient.downloadFile(tableId, recordId, fileName);
       const lowerName = fileName.toLowerCase();
 
       // Word-Dokumente: Text extrahieren mit mammoth
@@ -617,7 +649,7 @@ server.tool(
 
         let response = `# Datei: ${fileName}\n`;
         response += `**Typ:** Word-Dokument (.docx) | **Größe:** ${(buffer.length / 1024).toFixed(1)} KB\n`;
-        response += `**Quelle:** Tabelle \`${tableId}\`, Record ${recordId}, Feld \`${fieldId}\`\n\n`;
+        response += `**Quelle:** Tabelle \`${tableId}\`, Record ${recordId}\n\n`;
         response += `## Extrahierter Text\n\n`;
         response += text || "_Kein Text gefunden (möglicherweise nur Bilder/Tabellen)._";
 
@@ -675,7 +707,7 @@ server.tool(
       return {
         content: [{
           type: "text",
-          text: `Fehler beim Laden der Datei "${fileName}" aus Tabelle ${tableId}, Record ${recordId}, Feld ${fieldId}: ${error instanceof Error ? error.message : String(error)}\n\n**Tipps:**\n- Stimmt der Dateiname exakt? Nutze query_data um den Namen zu prüfen.\n- Ist das Feld-ID korrekt? Nutze get_schema um das Datei-Feld zu finden.\n- Hat der Record tatsächlich eine Datei in diesem Feld?`,
+          text: `Fehler beim Laden der Datei "${fileName}" aus Tabelle ${tableId}, Record ${recordId}: ${error instanceof Error ? error.message : String(error)}\n\n**Tipps:**\n- Stimmt der Dateiname exakt? Nutze query_data um den Namen zu prüfen.\n- Hat der Record tatsächlich eine Datei angehängt?`,
         }],
         isError: true,
       };
