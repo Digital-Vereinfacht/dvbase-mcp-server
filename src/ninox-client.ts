@@ -292,6 +292,55 @@ export class NinoxClient {
   }
 
   // ========================================
+  // File Download Endpoints
+  // ========================================
+
+  /**
+   * Download a binary file (not JSON).
+   * Used for file attachments in Ninox records.
+   */
+  private async requestBinary(endpoint: string): Promise<{ buffer: Buffer; contentType: string; fileName: string }> {
+    const url = `${this.baseUrl}${endpoint}`;
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${this.config.apiKey}`,
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(
+        `Ninox API error: ${response.status} ${response.statusText} - ${errorText}`
+      );
+    }
+
+    const contentType = response.headers.get("content-type") || "application/octet-stream";
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // Extract filename from Content-Disposition header or endpoint
+    const disposition = response.headers.get("content-disposition") || "";
+    const match = disposition.match(/filename[^;=\n]*=(?:(\\?['"])(.*?)\1|([^\s;]*))/i);
+    const fileName = match ? (match[2] || match[3]) : endpoint.split("/").pop() || "file";
+
+    return { buffer, contentType, fileName };
+  }
+
+  /**
+   * Download a file from a Ninox record.
+   * GET /tables/{tableId}/records/{recordId}/files/{fieldId}/{fileName}
+   * 
+   * @param tableId - Table ID (e.g., "A", "B2")
+   * @param recordId - Record ID (number)
+   * @param fieldId - Field ID of the file field (e.g., "C3")
+   * @param fileName - Name of the file to download
+   */
+  async downloadFile(tableId: string, recordId: number, fieldId: string, fileName: string): Promise<{ buffer: Buffer; contentType: string; fileName: string }> {
+    const encodedFileName = encodeURIComponent(fileName);
+    return this.requestBinary(`/tables/${tableId}/records/${recordId}/files/${fieldId}/${encodedFileName}`);
+  }
+
+  // ========================================
   // Record Write Endpoints
   // ========================================
 
