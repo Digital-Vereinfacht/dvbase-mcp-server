@@ -328,16 +328,27 @@ export class NinoxClient {
 
   /**
    * Download a file from a Ninox record.
-   * GET /tables/{tableId}/records/{recordId}/files/{fieldId}/{fileName}
+   * GET /tables/{tableId}/records/{recordId}/files/{fileName}
+   * 
+   * Note: Ninox addresses files by name on the record level, not by field ID.
    * 
    * @param tableId - Table ID (e.g., "A", "B2")
    * @param recordId - Record ID (number)
-   * @param fieldId - Field ID of the file field (e.g., "C3")
    * @param fileName - Name of the file to download
    */
-  async downloadFile(tableId: string, recordId: number, fieldId: string, fileName: string): Promise<{ buffer: Buffer; contentType: string; fileName: string }> {
+  async downloadFile(tableId: string, recordId: number, fileName: string): Promise<{ buffer: Buffer; contentType: string; fileName: string }> {
     const encodedFileName = encodeURIComponent(fileName);
-    return this.requestBinary(`/tables/${tableId}/records/${recordId}/files/${fieldId}/${encodedFileName}`);
+    return this.requestBinary(`/tables/${tableId}/records/${recordId}/files/${encodedFileName}`);
+  }
+
+  /**
+   * List all files attached to a record.
+   * GET /tables/{tableId}/records/{recordId}/files
+   * 
+   * Returns metadata for all files on the record.
+   */
+  async listFiles(tableId: string, recordId: number): Promise<unknown> {
+    return this.request<unknown>(`/tables/${tableId}/records/${recordId}/files`);
   }
 
   // ========================================
