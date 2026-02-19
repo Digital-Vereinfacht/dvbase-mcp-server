@@ -14,7 +14,6 @@
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import mammoth from "mammoth";
 import { NinoxClient, NinoxTableSchema, NinoxFullTableSchema, NinoxFullField } from "./ninox-client.js";
 import { ContextStore, ModuleContext } from "./context-store.js";
 
@@ -609,7 +608,8 @@ server.tool(
 
       // Word-Dokumente: Text extrahieren mit mammoth
       if (lowerName.endsWith(".docx")) {
-        const result = await mammoth.extractRawText({ buffer });
+        const mammoth = await import("mammoth");
+        const result = await mammoth.default.extractRawText({ buffer });
         const text = result.value;
         const warnings = result.messages
           .filter((m: any) => m.type === "warning")
@@ -629,7 +629,7 @@ server.tool(
         }
 
         // HTML extrahieren für bessere Struktur-Erkennung (Tabellen etc.)
-        const htmlResult = await mammoth.convertToHtml({ buffer });
+        const htmlResult = await mammoth.default.convertToHtml({ buffer });
         if (htmlResult.value && htmlResult.value.includes("<table")) {
           response += `\n\n## HTML-Struktur (enthält Tabellen)\n\n\`\`\`html\n${htmlResult.value}\n\`\`\``;
         }
